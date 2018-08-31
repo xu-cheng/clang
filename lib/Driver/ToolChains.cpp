@@ -43,6 +43,15 @@ using namespace clang::driver::toolchains;
 using namespace clang;
 using namespace llvm::opt;
 
+static std::string getBrewPrefix(const Driver& D)
+{
+  using llvm::sys::path::parent_path;
+  SmallString<256> ClangPath;
+  llvm::sys::fs::real_path(D.getClangProgramPath(), ClangPath);
+  const StringRef ClangDir = parent_path(ClangPath);
+  return parent_path(parent_path(parent_path(parent_path(ClangDir)))).str();
+}
+
 MachO::MachO(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
     : ToolChain(D, Triple, Args) {
   // We expect 'as', 'ld', etc. to be adjacent to our install dir.
@@ -4161,6 +4170,9 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
   const std::string OSLibDir = getOSLibDir(Triple, Args);
   const std::string MultiarchTriple = getMultiarchTriple(D, Triple, SysRoot);
 
+  // Add HOMEBREW_PREFIX/lib into the libraries search path
+  addPathIfExists(D, getBrewPrefix(getDriver()) + "/lib", Paths);
+
   // Add the multilib suffixed paths where they are available.
   if (GCCInstallation.isValid()) {
     const llvm::Triple &GCCTriple = GCCInstallation.getTriple();
@@ -4311,6 +4323,13 @@ std::string Linux::computeSysRoot() const {
 }
 
 std::string Linux::getDynamicLinker(const ArgList &Args) const {
+  // Check whether Linuxbrew glibc is installed.
+  // When installed, use it as the dynamic linker.
+  const std::string BrewDynamicLinker = getBrewPrefix(getDriver()) + "/lib/ld.so";
+  if (getVFS().exists(BrewDynamicLinker)) {
+    return BrewDynamicLinker;
+  }
+
   const llvm::Triple::ArchType Arch = getArch();
   const llvm::Triple &Triple = getTriple();
 
@@ -4598,6 +4617,9 @@ void Linux::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
 
   if (getTriple().getOS() == llvm::Triple::RTEMS)
     return;
+
+  // Add `HOMEBREW_PREFIX/include` into the header files search path.
+  addExternCSystemInclude(DriverArgs, CC1Args, SysRoot + getBrewPrefix(getDriver()) + "/include");
 
   // Add an include of '/include' directly. This isn't provided by default by
   // system GCCs, but is often used with cross-compiling GCCs, and harmless to

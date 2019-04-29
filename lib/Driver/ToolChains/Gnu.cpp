@@ -26,6 +26,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/TargetParser.h"
 #include "llvm/Support/VirtualFileSystem.h"
+#include "llvm/Support/FileSystem.h"
 #include <system_error>
 
 using namespace clang::driver;
@@ -422,6 +423,15 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-export-dynamic");
 
     if (!Args.hasArg(options::OPT_shared) && !IsStaticPIE) {
+      // Locate HOMEBREW_PREFIX/lib and pass `-rpath HOMEBREW_PREFIX/lib` to the linker.
+      using llvm::sys::path::parent_path;
+      SmallString<256> ClangPath;
+      llvm::sys::fs::real_path(D.getClangProgramPath(), ClangPath);
+      const StringRef ClangDir = parent_path(ClangPath);
+      const std::string BrewLib = (parent_path(parent_path(parent_path(parent_path(ClangDir)))) + "/lib").str();
+      CmdArgs.push_back("-rpath");
+      CmdArgs.push_back(Args.MakeArgString(BrewLib));
+
       const std::string Loader =
           D.DyldPrefix + ToolChain.getDynamicLinker(Args);
       CmdArgs.push_back("-dynamic-linker");

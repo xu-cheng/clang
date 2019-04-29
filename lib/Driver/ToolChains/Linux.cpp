@@ -31,6 +31,18 @@ using namespace llvm::opt;
 
 using tools::addPathIfExists;
 
+// Locate HOMEBREW_PREFIX based on the clang real path,
+// which should be in the form of HOMEBREW_PREFIX/Cellar/llvm/<version>/bin/clang
+#include "llvm/Support/FileSystem.h"
+static std::string getBrewPrefix(const Driver& D)
+{
+  using llvm::sys::path::parent_path;
+  SmallString<256> ClangPath;
+  llvm::sys::fs::real_path(D.getClangProgramPath(), ClangPath);
+  const StringRef ClangDir = parent_path(ClangPath);
+  return parent_path(parent_path(parent_path(parent_path(ClangDir)))).str();
+}
+
 /// Get our best guess at the multiarch triple for a target.
 ///
 /// Debian-based systems are starting to use a multiarch setup where they use
@@ -319,6 +331,9 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
   const std::string OSLibDir = getOSLibDir(Triple, Args);
   const std::string MultiarchTriple = getMultiarchTriple(D, Triple, SysRoot);
 
+  // Add HOMEBREW_PREFIX/lib into the libraries search path
+  addPathIfExists(D, getBrewPrefix(getDriver()) + "/lib", Paths);
+
   // Add the multilib suffixed paths where they are available.
   if (GCCInstallation.isValid()) {
     const llvm::Triple &GCCTriple = GCCInstallation.getTriple();
@@ -510,6 +525,13 @@ std::string Linux::computeSysRoot() const {
 }
 
 std::string Linux::getDynamicLinker(const ArgList &Args) const {
+  // Check whether Linuxbrew glibc is installed.
+  // When installed, use it as the dynamic linker.
+  const std::string BrewDynamicLinker = getBrewPrefix(getDriver()) + "/lib/ld.so";
+  if (getVFS().exists(BrewDynamicLinker)) {
+    return BrewDynamicLinker;
+  }
+
   const llvm::Triple::ArchType Arch = getArch();
   const llvm::Triple &Triple = getTriple();
 
@@ -855,6 +877,9 @@ void Linux::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
 
   if (getTriple().getOS() == llvm::Triple::RTEMS)
     return;
+
+  // Add `HOMEBREW_PREFIX/include` into the header files search path.
+  addExternCSystemInclude(DriverArgs, CC1Args, SysRoot + getBrewPrefix(getDriver()) + "/include");
 
   // Add an include of '/include' directly. This isn't provided by default by
   // system GCCs, but is often used with cross-compiling GCCs, and harmless to
